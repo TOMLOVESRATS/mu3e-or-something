@@ -380,7 +380,7 @@ int main()
                                    symmetryDir.c_str());
     }
 
-// ------------- Draw A_FB vs cos(theta) for positive P (dash markers only) -------------
+// ------------- Draw A_FB vs cos(theta) for positive P-------------
 {
     TCanvas* cPos = new TCanvas("cAfbCosPos",
                                 "A_FB vs cos(theta), P > 0",
@@ -435,7 +435,7 @@ int main()
 }
 
 
-// ------------- Draw A_FB vs cos(theta) for negative P (dash markers only) -------------
+// ------------- Draw A_FB vs cos(theta) for negative P  -------------
 {
     TCanvas* cNeg = new TCanvas("cAfbCosNeg",
                                 "A_FB vs cos(theta), P < 0",
