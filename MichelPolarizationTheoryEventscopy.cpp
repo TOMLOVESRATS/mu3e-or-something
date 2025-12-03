@@ -37,10 +37,8 @@
 #include "TROOT.h"
 
 
-// ----------------------------------------
-// Global settings
-// ----------------------------------------
 
+// Global settings
 double xMinPlot = 10.0 / 53.0;
 double thetaMinPlot = 0;
 double thetaMaxPlot = M_PI;
@@ -53,10 +51,7 @@ TH1D* hAfb_vs_x      = nullptr;   // A_FB vs xp (reduced momentum/energy)
 TH1D* hAfb_vs_costh  = nullptr;   // A_FB vs cos(theta_cut)
 #include <vector>
 
-// ----------------------------------------
 // Michel spectrum function
-// ----------------------------------------
-
 double michel(double *x, double *par)
 {
     double xp    = x[0];     // reduced energy
@@ -93,7 +88,7 @@ void fillAsymmetryHists(TH2D* fakeMCHistogram,
 {
     int thetaBins = fakeMCHistogram->GetNbinsY();
 
-    // ---------- A_FB vs x_p ----------
+    // -A_FB vs x_p 
     if (!hAfb_vs_x) {
         hAfb_vs_x = new TH1D("hAfb_vs_x",
                              "Forward-Backward Asymmetry vs x_{p};x_{p};A_{FB}",
@@ -126,7 +121,7 @@ void fillAsymmetryHists(TH2D* fakeMCHistogram,
     }
 
 
-// ---------- A_FB vs |cos(theta)|
+// A_FB vs |cos(theta)|
 if (!hAfb_vs_costh) {
     int nCosBins = 100; // |cosθ| from 0 to 1
     hAfb_vs_costh = new TH1D("hAfb_vs_costh",
@@ -179,10 +174,7 @@ for (int b = 1; b <= nCosBins; ++b) {
 
 
 }
-
-// ----------------------------------------
 // Create theoretical 2D histogram and fake Mc Simulation 
-// ----------------------------------------
 //compute for a given polarisaiton value
 void createTheoreticalHistogram(long long numberPositrons,
                                 double P_UChange,
@@ -256,23 +248,20 @@ void createTheoreticalHistogram(long long numberPositrons,
         // Force positivity (zero is OK)
         if (newBinContent < 0.0)
             newBinContent = 0.0;
-
             fakeMCHistogram->SetBinContent(i, j, newBinContent);
             fakeMCHistogram->SetBinError(i, j, uncertainty);
         }
     }
-        // ---------------------------------------------------------
     // Create comparison histograms: difference and pull maps
-    // ---------------------------------------------------------
     {
-        // ----- Difference: FakeMC - Theory -----
+        // FakeMC - Theory 
         TString hname_diff;
         hname_diff.Form("Diff_FakeMinusTheory_SM_P_%+.1f", P_UChange);
 
         TH2D* hDiff = (TH2D*)fakeMCHistogram->Clone(hname_diff);
         hDiff->SetTitle("FakeMC - Theory; x_{p}; #theta; #Delta N");
 
-        // Subtract theory contents bin-by-bin (errors stay from fakeMC)
+        // Subtract theory contents bin-by-bin 
         hDiff->Add(theoreticalSMHistogram, -1.0);
 
         // Draw and save
@@ -293,7 +282,7 @@ void createTheoreticalHistogram(long long numberPositrons,
         }
         delete cDiff;
 
-        // ----- Pull map: (FakeMC - Theory) / sqrt(Theory) -----
+        // (FakeMC - Theory) / sqrt(Theory) 
         TString hname_pull;
         hname_pull.Form("Pull_SM_P_%+.1f", P_UChange);
 
@@ -454,7 +443,7 @@ int main()
     int xBins = 100;
     int yBins = 100;
 
-    // ======== LOOP OVER P VALUES ========
+    // LOOP OVER P VALUES 
     for (double Ptest = -1.0; Ptest <= 1.0; Ptest += 0.1)
     {
         createTheoreticalHistogram(numberOfPositrons,
