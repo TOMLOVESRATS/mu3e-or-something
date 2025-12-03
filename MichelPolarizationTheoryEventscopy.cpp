@@ -42,8 +42,8 @@
 // ----------------------------------------
 
 double xMinPlot = 10.0 / 53.0;
-double thetaMinPlot = M_PI / 2 - 1.3;
-double thetaMaxPlot = M_PI / 2 + 1.4;
+double thetaMinPlot = 0;
+double thetaMaxPlot = M_PI;
 
 //root random generation 
 TRandom3 randMomentum(0);
@@ -52,12 +52,7 @@ TRandom3 randMomentum(0);
 TH1D* hAfb_vs_x      = nullptr;   // A_FB vs xp (reduced momentum/energy)
 TH1D* hAfb_vs_costh  = nullptr;   // A_FB vs cos(theta_cut)
 #include <vector>
-// Store one copy of each asymmetry curve per polarisation
-std::vector<TH1D*> gAfbX_list;
-std::vector<TH1D*> gAfbCos_pos;
-std::vector<TH1D*> gAfbCos_neg;
-std::vector<double> gP_pos;
-std::vector<double> gP_neg;
+
 // ----------------------------------------
 // Michel spectrum function
 // ----------------------------------------
@@ -72,7 +67,7 @@ double michel(double *x, double *par)
     double eta     = par[1];
     double epsilon = par[2];
     double delta   = par[3];
-    double P_u     = par[4];
+    double P_u     = std::abs(par[4]);
 
     // PDG constant
     double x_0 = 9.67e-3;
@@ -83,7 +78,7 @@ double michel(double *x, double *par)
         (3.0 * (1.0 - xp)
         + 2.0 * rho * (4.0 * xp / 3.0 - 1.0)
         + 3.0 * eta * x_0 * (1.0 - xp) / xp
-        + P_u * epsilon * cos(theta)
+        + std::abs(P_u) * epsilon * cos(theta)
           * (1.0 - xp + (2.0 / 3.0) * delta * (4.0 * xp - 3.0)));
 
     return value > 0 ? value : 0;
@@ -111,18 +106,15 @@ void fillAsymmetryHists(TH2D* fakeMCHistogram,
         double N_backward = 0.0;
 
         for (int it = 1; it <= thetaBins; ++it) {
-            double thetaLow  = fakeMCHistogram->GetYaxis()->GetBinLowEdge(it);
-            double thetaHigh = thetaLow + fakeMCHistogram->GetYaxis()->GetBinWidth(it);
-
-            // average cos(theta) over this theta-bin
-            double costh = 0.5 * (std::cos(thetaLow) + std::cos(thetaHigh));
+            double thetaCenter = fakeMCHistogram->GetYaxis()->GetBinCenter(it);
+            double costh = std::cos(thetaCenter);
 
             double content = fakeMCHistogram->GetBinContent(ix, it);
             if (content <= 0.0) continue;
 
             if (costh > 0.0)
                 N_forward  += content;
-            else
+            else if (costh < 0.0)
                 N_backward += content;
         }
 
@@ -139,7 +131,7 @@ if (!hAfb_vs_costh) {
     int nCosBins = 100; // |cosθ| from 0 to 1
     hAfb_vs_costh = new TH1D("hAfb_vs_costh",
                              "Forward-Backward Asymmetry vs |cos#theta|;|cos#theta|;A_{FB}",
-                             nCosBins, 0.0, 1.0);
+                             nCosBins, 0.0, 1);
 }
 hAfb_vs_costh->Reset();
 
@@ -185,8 +177,8 @@ for (int b = 1; b <= nCosBins; ++b) {
     hAfb_vs_costh->SetBinContent(b, Afb);
 }
 
-}
 
+}
 
 // ----------------------------------------
 // Create theoretical 2D histogram and fake Mc Simulation 
@@ -260,17 +252,87 @@ void createTheoreticalHistogram(long long numberPositrons,
 
             double binContent = theoreticalSMHistogram->GetBinContent(i, j);
             double uncertainty = (binContent > 0.0) ? std::sqrt(binContent) : 0.0;
-
-            double newBinContent = binContent;
-            if (uncertainty > 0.0) {
-                newBinContent = randMomentum.Gaus(binContent, uncertainty);
-                if (newBinContent < 0.0) newBinContent = 0.0; // avoid negatives
-            }
+            double newBinContent = randMomentum.Gaus(binContent, uncertainty);
+        // Force positivity (zero is OK)
+        if (newBinContent < 0.0)
+            newBinContent = 0.0;
 
             fakeMCHistogram->SetBinContent(i, j, newBinContent);
             fakeMCHistogram->SetBinError(i, j, uncertainty);
         }
     }
+        // ---------------------------------------------------------
+    // Create comparison histograms: difference and pull maps
+    // ---------------------------------------------------------
+    {
+        // ----- Difference: FakeMC - Theory -----
+        TString hname_diff;
+        hname_diff.Form("Diff_FakeMinusTheory_SM_P_%+.1f", P_UChange);
+
+        TH2D* hDiff = (TH2D*)fakeMCHistogram->Clone(hname_diff);
+        hDiff->SetTitle("FakeMC - Theory; x_{p}; #theta; #Delta N");
+
+        // Subtract theory contents bin-by-bin (errors stay from fakeMC)
+        hDiff->Add(theoreticalSMHistogram, -1.0);
+
+        // Draw and save
+        TCanvas* cDiff = new TCanvas("cDiff", "FakeMC - Theory", 800, 600);
+        cDiff->cd();
+        hDiff->SetStats(0);
+        hDiff->Draw("COLZ");
+
+        std::string diffPdfName =
+            std::string(symmetryDir) + "/Diff_FakeMinusTheory_SM_P_" + std::to_string(P_UChange) + ".pdf";
+        cDiff->SaveAs(diffPdfName.c_str());
+
+        std::string diffRootName =
+            std::string(symmetryDir) + "/Diff_FakeMinusTheory_SM_P_" + std::to_string(P_UChange) + ".root";
+        {
+            TFile fDiff(diffRootName.c_str(), "RECREATE");
+            hDiff->Write("diff");
+        }
+        delete cDiff;
+
+        // ----- Pull map: (FakeMC - Theory) / sqrt(Theory) -----
+        TString hname_pull;
+        hname_pull.Form("Pull_SM_P_%+.1f", P_UChange);
+
+        TH2D* hPull = (TH2D*)fakeMCHistogram->Clone(hname_pull);
+        hPull->SetTitle("Pull: (FakeMC - Theory) / #sqrt{Theory}; x_{p}; #theta; pull");
+
+        for (int i = 1; i <= xBins; ++i) {
+            for (int j = 1; j <= thetaBins; ++j) {
+                double nTh  = theoreticalSMHistogram->GetBinContent(i, j);
+                double nMC  = fakeMCHistogram->GetBinContent(i, j);
+                double diff = nMC - nTh;
+
+                double sigma = (nTh > 0.0) ? std::sqrt(nTh) : 0.0;
+                double pull  = 0.0;
+                if (sigma > 0.0) pull = diff / sigma;
+
+                hPull->SetBinContent(i, j, pull);
+                hPull->SetBinError(i, j, 0.0); // often we don't use errors on pull bins
+            }
+        }
+
+        TCanvas* cPull = new TCanvas("cPull", "Pull Map", 800, 600);
+        cPull->cd();
+        hPull->SetStats(0);
+        hPull->Draw("COLZ");
+
+        std::string pullPdfName =
+            std::string(symmetryDir) + "/PullMap_SM_P_" + std::to_string(P_UChange) + ".pdf";
+        cPull->SaveAs(pullPdfName.c_str());
+
+        std::string pullRootName =
+            std::string(symmetryDir) + "/PullMap_SM_P_" + std::to_string(P_UChange) + ".root";
+        {
+            TFile fPull(pullRootName.c_str(), "RECREATE");
+            hPull->Write("pull");
+        }
+        delete cPull;
+    }
+
     // Save plot
     //drawing the graph with c being the canvas name
     // --- Draw and save theory surface ---
@@ -319,36 +381,59 @@ void createTheoreticalHistogram(long long numberPositrons,
 
     // --- Fill asymmetry histograms from this fake MC ---
     fillAsymmetryHists(fakeMCHistogram, xBins, xMin, xMax);
+// ------------------------------------------------------------
+// Draw and save A_FB vs x  (momentum / xp)
+// ------------------------------------------------------------
+{
+    TCanvas *c_afb_x = new TCanvas("c_afb_x", "A_FB vs x", 800, 600);
+    c_afb_x->cd();
 
-    // --- Plot and save A_FB vs x and A_FB vs cos(theta_cut) ---
-    // --- Store a clone of the asymmetry histograms for this P ---
-    {if (hAfb_vs_x) {
-    TString nameX;
-    nameX.Form("hAfb_vs_x_P_%+.1f", P_UChange);
-    TH1D* hXclone = (TH1D*)hAfb_vs_x->Clone(nameX);
-    hXclone->SetDirectory(nullptr); // detach from any file
-    gAfbX_list.push_back(hXclone);
-    }
+    TString titleAfbX;
 
-// --- Store A_FB vs cos(theta) for this P, split into pos/neg P ---
-if (hAfb_vs_costh) {
-    TString nameC;
-    nameC.Form("hAfb_vs_costh_P_%+.1f", P_UChange);
-    TH1D* hCclone = (TH1D*)hAfb_vs_costh->Clone(nameC);
-    hCclone->SetDirectory(nullptr);  // detach from files
 
-    if (P_UChange > 1e-6) {
-        gAfbCos_pos.push_back(hCclone);
-        gP_pos.push_back(P_UChange);
-    } else if (P_UChange < -1e-6) {
-        gAfbCos_neg.push_back(hCclone);
-        gP_neg.push_back(P_UChange);
-    } else {
-        // P ~ 0, not plotted; avoid leak
-        delete hCclone;
-    }
+    // Draw without error bars: use "P" (points only)
+    hAfb_vs_x->Draw("P");
+
+    // Save PDF in symmetry folder
+    std::string pdfNameAfbX =
+        std::string(symmetryDir) + "/Afb_vs_x_P_" + std::to_string(P_UChange) + ".pdf";
+    c_afb_x->SaveAs(pdfNameAfbX.c_str());
+
+    // Save ROOT in symmetry folder
+    std::string rootNameAfbX =
+        std::string(symmetryDir) + "/Afb_vs_x_P_" + std::to_string(P_UChange) + ".root";
+    TFile *fAfbX = new TFile(rootNameAfbX.c_str(), "RECREATE");
+    hAfb_vs_x->Write("Afb_vs_x");
+    fAfbX->Close();
 }
+// ------------------------------------------------------------
+// Draw and save A_FB vs cos(theta)
+// ------------------------------------------------------------
+{
+    TCanvas *c_afb_cos = new TCanvas("c_afb_cos", "A_FB vs cos(theta)", 800, 600);
+    c_afb_cos->cd();
+
+    TString titleAfbCos;
+
+
+    
+    // Draw without error bars
+    hAfb_vs_costh->Draw("P");
+    hAfb_vs_costh->SetMarkerStyle(2);
+    // Save PDF in symmetry folder
+    std::string pdfNameAfbCos =
+        std::string(symmetryDir) + "/Afb_vs_costh_P_" + std::to_string(P_UChange) + ".pdf";
+    c_afb_cos->SaveAs(pdfNameAfbCos.c_str());
+
+    // Save ROOT in symmetry folder
+    std::string rootNameAfbCos =
+        std::string(symmetryDir) + "/Afb_vs_costh_P_" + std::to_string(P_UChange) + ".root";
+    TFile *fAfbCos = new TFile(rootNameAfbCos.c_str(), "RECREATE");
+    hAfb_vs_costh->Write("Afb_vs_costh");
+    fAfbCos->Close();
 }
+
+
 }
 // ----------------------------------------
 // Main
@@ -370,218 +455,15 @@ int main()
     int yBins = 100;
 
     // ======== LOOP OVER P VALUES ========
-    for (double Ptest = -1.0; Ptest <= 1.0001; Ptest += 0.1)
+    for (double Ptest = -1.0; Ptest <= 1.0; Ptest += 0.1)
     {
         createTheoreticalHistogram(numberOfPositrons,
                                    Ptest,
                                    xBins, yBins,
                                    theoryDir.c_str(),
                                    fakeDir.c_str(),
-                                   symmetryDir.c_str());
+                                   symmetryDir.c_str()); 
     }
-
-// ------------- Draw A_FB vs cos(theta) for positive P-------------
-{
-    TCanvas* cPos = new TCanvas("cAfbCosPos",
-                                "A_FB vs cos(theta), P > 0",
-                                900, 700);
-    cPos->cd();
-
-    TLegend* legPos = new TLegend(0.15, 0.20, 0.45, 0.45);
-    legPos->SetBorderSize(0);
-    legPos->SetFillStyle(0);
-
-    bool first = true;
-    int colorIndex = 2;
-
-    for (size_t i = 0; i < gAfbCos_pos.size(); ++i)
-    {
-        TH1D* h = gAfbCos_pos[i];
-        double P = gP_pos[i];
-
-        h->SetLineStyle(0);      // no lines
-        h->SetLineWidth(0);
-        h->SetMarkerStyle(2);    // small dash
-        h->SetMarkerSize(1.4);
-        h->SetMarkerColor(colorIndex);
-
-        if (first)
-        {
-            h->SetStats(0);
-            h->GetYaxis()->SetRangeUser(-1.0, 1.0);
-            h->Draw("P");
-            first = false;
-        }
-        else
-        {
-            h->Draw("P SAME");
-        }
-
-        TString lab;
-        lab.Form("P = %.1f", P);
-        legPos->AddEntry(h, lab, "p");
-
-        colorIndex++;
-    }
-
-    if (!first)
-    {
-        legPos->Draw();
-        std::string out = std::string(symmetryDir) + "/Afb_vs_cosTheta_PosP.pdf";
-        cPos->SaveAs(out.c_str());
-    }
-
-    delete cPos;
-}
-
-
-// ------------- Draw A_FB vs cos(theta) for negative P  -------------
-{
-    TCanvas* cNeg = new TCanvas("cAfbCosNeg",
-                                "A_FB vs cos(theta), P < 0",
-                                900, 700);
-    cNeg->cd();
-
-    TLegend* legNeg = new TLegend(0.15, 0.20, 0.45, 0.45);
-    legNeg->SetBorderSize(0);
-    legNeg->SetFillStyle(0);
-
-    bool first = true;
-    int colorIndex = 2;
-
-    for (size_t i = 0; i < gAfbCos_neg.size(); ++i)
-    {
-        TH1D* h = gAfbCos_neg[i];
-        double P = gP_neg[i];
-
-        h->SetLineStyle(0);      // no lines
-        h->SetLineWidth(0);
-        h->SetMarkerStyle(2);    // small dash
-        h->SetMarkerSize(1.4);
-        h->SetMarkerColor(colorIndex);
-
-        if (first)
-        {
-            h->SetStats(0);
-            h->GetYaxis()->SetRangeUser(-1.0, 1.0);
-            h->Draw("P");
-            first = false;
-        }
-        else
-        {
-            h->Draw("P SAME");
-        }
-
-        TString lab;
-        lab.Form("P = %.1f", P);
-        legNeg->AddEntry(h, lab, "p");
-
-        colorIndex++;
-    }
-
-    if (!first)
-    {
-        legNeg->Draw();
-        std::string out = std::string(symmetryDir) + "/Afb_vs_cosTheta_NegP.pdf";
-        cNeg->SaveAs(out.c_str());
-    }
-
-    delete cNeg;
-}
-// ======== A_FB vs cos(theta): ALL P (pos + neg) ========
-{
-    TCanvas* cAll = new TCanvas("cAfbCosAll",
-                                "A_FB vs cos(theta), All P",
-                                900, 700);
-    cAll->cd();
-
-    TLegend* legAll = new TLegend(0.15, 0.20, 0.45, 0.45);
-    legAll->SetBorderSize(0);
-    legAll->SetFillStyle(0);
-
-    bool first = true;
-    int colorIndex = 2;
-
-    // -------- POSITIVE P --------
-    for (size_t i = 0; i < gAfbCos_pos.size(); ++i)
-    {
-        TH1D* h = gAfbCos_pos[i];
-        double P = gP_pos[i];
-
-        h->SetLineStyle(0);
-        h->SetLineWidth(0);
-        h->SetMarkerStyle(2);
-        h->SetMarkerSize(1.2);
-    static const int warmColors[10] = {
-        632, // kRed
-        633, // kRed+1
-        634, // kRed+2
-        635, // kRed+3
-        636, // kRed+4
-        800, // kOrange
-        801, // kOrange+1
-        802, // kOrange+2
-        803, // kOrange+3
-        804  // kOrange+4
-    };
-
-    h->SetMarkerColor( warmColors[i % 10] );
-
-        if (first) {
-            h->SetStats(0);
-            h->GetYaxis()->SetRangeUser(-1.0, 1.0);
-            h->Draw("P");
-            first = false;
-        } else {
-            h->Draw("P SAME");
-        }
-
-        TString lab; lab.Form("P = %.1f (pos)", P);
-        legAll->AddEntry(h, lab, "p");
-
-        colorIndex++;
-    }
-
-    // -------- NEGATIVE P --------
-    for (size_t i = 0; i < gAfbCos_neg.size(); ++i)
-    {
-        TH1D* h = gAfbCos_neg[i];
-        double P = gP_neg[i];
-
-        h->SetLineStyle(0);
-        h->SetLineWidth(0);
-        h->SetMarkerStyle(2);
-        h->SetMarkerSize(1.2);
-   static const int coolColors[10] = {
-        600, // kBlue
-        601, // kBlue+1
-        602, // kBlue+2
-        603, // kBlue+3
-        604, // kBlue+4
-        860, // kAzure
-        861, // kAzure+1
-        862, // kAzure+2
-        432, // kCyan+1
-        433  // kCyan+2
-    };
-    h->SetMarkerColor( coolColors[i % 10] );
-
-
-        h->Draw("P SAME");
-
-        TString lab; lab.Form("P = %.1f (neg)", P);
-        legAll->AddEntry(h, lab, "p");
-
-        colorIndex++;
-    }
-
-    legAll->Draw();
-
-    std::string out = std::string(symmetryDir) + "/Afb_vs_cosTheta_AllP.pdf";
-    cAll->SaveAs(out.c_str());
-
-    delete cAll;
-}
 
 
     return 0;
